@@ -3,92 +3,415 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0B1F3A">
     <title>BharatOne Rent Collection Dashboard</title>
-    <link rel="manifest" href="manifest.json">
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-50">
-    <div id="root"></div>
-    <script>
-        const { useState, useEffect } = React;
-        const { createRoot } = ReactDOM;
 
-        function App() {
-            const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+    <!-- 2. Load Modern Babel (v7) for JSX Compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 3. Import Map: Tells the browser where to find libraries -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+            "firebase/app": "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js"
+        }
+    }
+    </script>
+</head>
+<body class="bg-warm-ivory">
+    <div id="root"></div>
+
+    <!-- 4. Application Script: Note data-type="module" for modern imports -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useCallback, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+        import { 
+            getFirestore, collection, query, where, getDocs, doc, setDoc, updateDoc, deleteDoc, 
+            onSnapshot, serverTimestamp, addDoc, getDoc 
+        } from 'firebase/firestore';
+        import { Calendar, Users, Briefcase, DollarSign, Bell, RefreshCw, X, Menu, Search, FileText, CheckCircle, Clock, Trash2, Edit2, Zap, ArrowDown, ArrowUp, Link } from 'lucide-react';
+
+        // --- CONFIGURATION CONSTANTS & ROLE DEFINITIONS ---
+        const DUE_DAY_OF_MONTH = 5;
+        const DAYS_BEFORE_DUE_FOR_REMINDER_1 = 5; // TemplateOne
+        const DAYS_BEFORE_DUE_FOR_REMINDER_2 = 1; // TemplateTwo
+
+        const PAYMENT_MODE_INFO = `
+            Please ensure payment is received by the due date to avoid late fees.
+            Payment Modes:
+            1. UPI ID: bharatone@upi
+            2. Bank Transfer: A/C No. 123456789 | IFSC: BOI00001
+        `;
+
+        // Define Users and their associated roles
+        const USER_ROLES = {
+            'Monika Verma': 'ADMIN',
+            'Karunesh Verma': 'ADMIN',
+            'Pappu Tikone': 'ADMIN',
+            'Shankar': 'COLLECTOR',
+        };
+
+        // Define Permissions based on role
+        const PERMISSIONS = {
+            ADMIN: { canEditTenants: true, canCollectRent: true, canViewReports: true, canManageMaintenance: true, canSendReminders: true, canViewAuditLog: true },
+            COLLECTOR: { canEditTenants: false, canCollectRent: true, canViewReports: false, canManageMaintenance: false, canSendReminders: false, canViewAuditLog: false },
+            DEFAULT: { canEditTenants: false, canCollectRent: false, canViewReports: false, canManageMaintenance: false, canSendReminders: false, canViewAuditLog: false },
+        };
+
+        const COLLECTOR_OPTIONS = [
+            { name: 'Karunesh Verma', location: 'General' },
+            { name: 'Shankar', location: 'Pune' },
+            { name: 'Suyog', location: 'Box Office' },
+        ];
+
+        const BANK_ACCOUNTS = [
+            { name: 'Axis Bank - Karunesh', number: '1234567890', ifsc: 'AXIS0001', recipient: 'Karunesh Verma' },
+            { name: 'HDFC Bank - Shankar (Pune)', number: '1122334455', ifsc: 'HDFC0002', recipient: 'Shankar' },
+            { name: 'ICICI Bank - Suyog (Box Office)', number: '9988776655', ifsc: 'ICIC0003', recipient: 'Suyog' },
+        ];
+
+        const QR_CODES = [
+            { name: 'UPI - Karunesh', id: 'karunesh@upi', recipient: 'Karunesh Verma' },
+            { name: 'GPay - Shankar (Pune)', id: 'shankar.pune@gpay', recipient: 'Shankar' },
+            { name: 'PayTM - Suyog (Box Office)', id: 'suyog.box@paytm', recipient: 'Suyog' },
+        ];
+
+        // --- FIREBASE GLOBALS AND INIT ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+        // Utility to convert raw object to tenant object
+        const parseTenant = (doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            monthlyRent: doc.data().monthlyRent || 0,
+            lastCollected: doc.data().lastCollected ? doc.data().lastCollected.toDate() : null,
+            mobileNumber: doc.data().mobileNumber || 'N/A',
+            initialOutstandingRent: doc.data().initialOutstandingRent || 0,
+            depositOutstanding: doc.data().depositOutstanding || 0,
+            powerBillAmount: doc.data().powerBillAmount || 0,
+            securityDeposit: doc.data().securityDeposit || 0,
+            depositHeldDate: doc.data().depositHeldDate ? doc.data().depositHeldDate.toDate() : null,
+            leaseLink: doc.data().leaseLink || '',
+            kycLink: doc.data().kycLink || '',
+        });
+
+        // Utility Functions
+        const formatDate = (date) => date ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(date) : 'N/A';
+        const formatCurrency = (amount) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount);
+        
+        const LATE_FEE_PERCENTAGE = 0.02; 
+
+        const calculateLateFee = (monthlyRent, dueDate) => {
+            const today = new Date();
+            const due = new Date(dueDate);
+            today.setHours(0, 0, 0, 0);
+            due.setHours(0, 0, 0, 0);
+            
+            if (today <= due) return 0;
+
+            const diffTime = today.getTime() - due.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            const penalty = monthlyRent * LATE_FEE_PERCENTAGE * diffDays;
+            return Math.round(penalty);
+        };
+
+        const getCollectionPaths = (userId) => ({
+            tenants: `artifacts/${appId}/users/${userId}/tenants`,
+            paymentHistory: `artifacts/${appId}/users/${userId}/paymentHistory`,
+            maintenance: `artifacts/${appId}/users/${userId}/maintenance`,
+            auditLog: `artifacts/${appId}/users/${userId}/auditLog`,
+            expenses: `artifacts/${appId}/users/${userId}/expenses`,
+        });
+
+        const getCurrentDueCycle = (currentDate = new Date()) => {
+            const dueDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), DUE_DAY_OF_MONTH);
+            let rentMonth = currentDate.getMonth() - 1;
+            let rentYear = currentDate.getFullYear();
+
+            if (rentMonth < 0) {
+                rentMonth = 11;
+                rentYear -= 1;
+            }
+
+            const rentCycleStart = new Date(rentYear, rentMonth, 1);
+            const rentMonthText = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(rentCycleStart);
+
+            return {
+                dueDate,
+                rentMonthText,
+                isOverdue: currentDate > dueDate,
+            };
+        };
+
+        const getTenantStatus = (tenant, paymentHistory, cycle) => {
+            const hasPaid = paymentHistory.some(payment => 
+                payment.tenantId === tenant.id && 
+                payment.rentMonthText === cycle.rentMonthText
+            );
+            if (hasPaid) return 'Paid';
+            if (cycle.isOverdue) return 'Due';
+            return 'Pending';
+        };
+
+        const getDaysUntilDue = (dueDate) => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); 
+            const due = new Date(dueDate);
+            due.setHours(0, 0, 0, 0);
+            const diffTime = due.getTime() - today.getTime();
+            return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        };
+
+        // --- UI Components ---
+        
+        const Button = ({ children, color = 'blue', onClick, disabled = false, className = '', title = '', type = 'button' }) => {
+            let colorClasses = '';
+            if (disabled) {
+                colorClasses = 'bg-gray-300 text-gray-500 cursor-not-allowed';
+            } else {
+                switch (color) {
+                    case 'gold': colorClasses = 'bg-yellow-500 text-blue-900 hover:bg-yellow-600'; break;
+                    case 'blue': colorClasses = 'bg-blue-900 text-white hover:bg-blue-800'; break;
+                    case 'green': colorClasses = 'bg-green-700 text-white hover:bg-green-800'; break;
+                    case 'red': colorClasses = 'bg-red-600 text-white hover:bg-red-700'; break;
+                    case 'neutral': colorClasses = 'bg-gray-200 text-gray-700 hover:bg-gray-300'; break;
+                    default: colorClasses = 'bg-blue-900 text-white hover:bg-blue-800';
+                }
+            }
+            return (
+                <button type={type} className={`px-3 py-2 text-sm font-semibold rounded-lg shadow-md transition duration-150 transform hover:scale-[1.02] active:scale-[0.98] ${colorClasses} ${className}`} onClick={onClick} disabled={disabled} title={title}>
+                    {children}
+                </button>
+            );
+        };
+
+        const LoadingSpinner = () => (
+            <div className="fixed inset-0 flex items-center justify-center bg-gray-100 z-50">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-900"></div>
+                <p className="ml-4 text-blue-900 font-semibold">Loading BharatOne App...</p>
+            </div>
+        );
+
+        const MessagePopup = ({ text, type, onClose }) => {
+            if (!text) return null;
+            let color = type === 'success' ? 'bg-green-700' : 'bg-red-600';
+            return (
+                <div className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-xl text-white ${color} z-50 transition-transform duration-300`}>
+                    <div className="flex items-center justify-between">
+                        <p className="mr-4">{text}</p>
+                        <button onClick={onClose}><X size={16} /></button>
+                    </div>
+                </div>
+            );
+        };
+
+        const Modal = ({ title, isOpen, onClose, children, className = '' }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-blue-900/70 flex items-center justify-center z-40 p-4">
+                    <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[90vh] overflow-y-auto ${className}`} onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center border-b p-4 sticky top-0 bg-white z-10">
+                            <h2 className="text-2xl font-bold text-blue-900">{title}</h2>
+                            <button onClick={onClose} className="p-2 rounded-full text-blue-900 hover:bg-gray-100"><X size={24} /></button>
+                        </div>
+                        <div className="p-6">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const UserSelectionModal = ({ onSelect }) => {
+            const [selectedUser, setSelectedUser] = useState(Object.keys(USER_ROLES)[0]);
+            return (
+                <div className="fixed inset-0 bg-blue-900/95 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 text-center">
+                        <h2 className="text-3xl font-bold text-blue-900 mb-4">Select Your Role</h2>
+                        <p className="text-gray-600 mb-6">Please select your identity.</p>
+                        <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} className="w-full p-3 border-2 border-yellow-500 rounded-lg mb-6 text-lg">
+                            {Object.keys(USER_ROLES).map(name => <option key={name} value={name}>{name} ({USER_ROLES[name]})</option>)}
+                        </select>
+                        <Button color="gold" onClick={() => onSelect(selectedUser)} className="w-full justify-center flex items-center text-lg">Proceed as {selectedUser}</Button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [auth, setAuth] = useState(null);
+            const [db, setDb] = useState(null);
+            const [userId, setUserId] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [currentUser, setCurrentUser] = useState(null);
+            const [userRole, setUserRole] = useState(null);
+            
+            // Data States
+            const [tenants, setTenants] = useState([]);
+            const [paymentHistory, setPaymentHistory] = useState([]);
+            const [maintenanceRequests, setMaintenanceRequests] = useState([]);
+            const [expenses, setExpenses] = useState([]);
+            
+            // UI States
+            const [showUserSelectModal, setShowUserSelectModal] = useState(true);
+            const [loading, setLoading] = useState(true);
+            const [message, setMessage] = useState({ text: '', type: '' });
+            const [filterStatus, setFilterStatus] = useState('All');
+            const [searchTerm, setSearchTerm] = useState('');
+
+            // Check Permissions
+            const hasPermission = useCallback((key) => {
+                const role = userRole || 'DEFAULT';
+                return PERMISSIONS[role] ? PERMISSIONS[role][key] : false;
+            }, [userRole]);
+
+            // Firebase Init
+            useEffect(() => {
+                try {
+                    const app = initializeApp(firebaseConfig);
+                    const firestore = getFirestore(app);
+                    const authInstance = getAuth(app);
+                    setDb(firestore);
+                    setAuth(authInstance);
+                    const unsubscribe = onAuthStateChanged(authInstance, (user) => {
+                        if (user) setUserId(user.uid);
+                        else signInAnonymously(authInstance).catch(err => console.error(err));
+                        setIsAuthReady(true);
+                    });
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        signInWithCustomToken(authInstance, __initial_auth_token).catch(err => console.error(err));
+                    }
+                    return () => unsubscribe();
+                } catch (error) {
+                    console.error("Init Error:", error);
+                    setLoading(false);
+                }
+            }, []);
+
+            // Data Listeners
+            useEffect(() => {
+                if (!isAuthReady || !db || !userId || !currentUser) return;
+                
+                const paths = getCollectionPaths(userId);
+                
+                const unsubTenants = onSnapshot(collection(db, paths.tenants), (snap) => {
+                    setTenants(snap.docs.map(parseTenant));
+                });
+                const unsubHistory = onSnapshot(collection(db, paths.paymentHistory), (snap) => {
+                    setPaymentHistory(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                });
+                const unsubMaint = onSnapshot(collection(db, paths.maintenance), (snap) => {
+                    setMaintenanceRequests(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                });
+                const unsubExp = onSnapshot(collection(db, paths.expenses), (snap) => {
+                    setExpenses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                });
+
+                return () => { unsubTenants(); unsubHistory(); unsubMaint(); unsubExp(); };
+            }, [isAuthReady, db, userId, currentUser]);
+
+            // Handlers
+            const handleUserSelect = (user) => {
+                setCurrentUser(user);
+                setUserRole(USER_ROLES[user]);
+                setShowUserSelectModal(false);
+                setLoading(false);
+            };
+
+            // Computed Data
+            const filteredTenants = useMemo(() => {
+                let list = tenants.map(t => ({ ...t, status: getTenantStatus(t, paymentHistory, getCurrentDueCycle()) }));
+                if (searchTerm) {
+                    const lower = searchTerm.toLowerCase();
+                    list = list.filter(t => t.name.toLowerCase().includes(lower) || t.unitNo.toLowerCase().includes(lower));
+                }
+                if (filterStatus !== 'All') list = list.filter(t => t.status === filterStatus);
+                return list;
+            }, [tenants, paymentHistory, filterStatus, searchTerm]);
+
+            if (loading || (isAuthReady && !currentUser)) {
+                if (showUserSelectModal) return <UserSelectionModal onSelect={handleUserSelect} />;
+                return <LoadingSpinner />;
+            }
 
             return (
-                <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900">
-                    {/* Header */}
-                    <header className="bg-white shadow-md">
-                        <div className="max-w-7xl mx-auto px-4 py-6">
-                            <h1 className="text-3xl font-bold text-blue-900">BharatOne Spaces</h1>
-                            <p className="text-gray-600">Rent Collection Dashboard</p>
+                <div className="min-h-screen bg-gray-50 font-sans text-blue-900 pt-20 pb-10">
+                    <header className="fixed top-0 w-full bg-blue-900 shadow-md z-30 text-white p-4 flex justify-between items-center">
+                        <div className="flex items-center">
+                            <span className="bg-yellow-500 text-blue-900 font-bold p-2 rounded mr-3">B1</span>
+                            <h1 className="text-xl font-bold">BharatOne Rent</h1>
+                        </div>
+                        <div className="text-sm text-right">
+                            <p className="opacity-80">{userRole}</p>
+                            <p className="font-bold">{currentUser}</p>
                         </div>
                     </header>
 
-                    {/* Main Content */}
-                    <main className="max-w-7xl mx-auto px-4 py-8">
-                        {/* Welcome Card */}
-                        <div className="bg-white rounded-lg shadow-lg p-8 mb-6">
-                            <h2 className="text-2xl font-bold text-gray-800 mb-4">Welcome to BharatOne Collection System</h2>
-                            <p className="text-gray-600 mb-4">Manage your rent collection and tenant information efficiently.</p>
-                            <div className="flex gap-4">
-                                <button className="bg-blue-900 text-white px-6 py-3 rounded-lg hover:bg-blue-800 transition">
-                                    View Collections
-                                </button>
-                                <button className="bg-gray-200 text-gray-800 px-6 py-3 rounded-lg hover:bg-gray-300 transition">
-                                    Add Tenant
-                                </button>
+                    <main className="container mx-auto px-4">
+                        <div className="mb-6 bg-white p-4 rounded-lg shadow flex flex-col md:flex-row justify-between gap-4">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3 top-2.5 text-gray-400" size={20} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Search Tenants..." 
+                                    className="w-full pl-10 p-2 border rounded-lg" 
+                                    value={searchTerm} 
+                                    onChange={e => setSearchTerm(e.target.value)} 
+                                />
                             </div>
+                            <select 
+                                value={filterStatus} 
+                                onChange={e => setFilterStatus(e.target.value)} 
+                                className="p-2 border rounded-lg"
+                            >
+                                <option value="All">All Status</option>
+                                <option value="Paid">Paid</option>
+                                <option value="Due">Due</option>
+                                <option value="Pending">Pending</option>
+                            </select>
                         </div>
 
-                        {/* Stats Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                            <div className="bg-white rounded-lg shadow-lg p-6">
-                                <h3 className="text-gray-600 text-sm mb-2">Total Collection</h3>
-                                <p className="text-3xl font-bold text-green-600">₹45,000</p>
-                            </div>
-                            <div className="bg-white rounded-lg shadow-lg p-6">
-                                <h3 className="text-gray-600 text-sm mb-2">Pending</h3>
-                                <p className="text-3xl font-bold text-orange-600">₹12,000</p>
-                            </div>
-                            <div className="bg-white rounded-lg shadow-lg p-6">
-                                <h3 className="text-gray-600 text-sm mb-2">Active Tenants</h3>
-                                <p className="text-3xl font-bold text-blue-900">15</p>
-                            </div>
-                        </div>
-
-                        {/* Install App Section */}
-                        <div className="bg-blue-600 text-white rounded-lg shadow-lg p-8 text-center">
-                            <h3 className="text-2xl font-bold mb-4">📱 Install as Mobile App</h3>
-                            <p className="mb-4">Get quick access by installing BharatOne as an app on your device!</p>
-                            <p className="text-sm opacity-90">Look for the "Add to Home Screen" or "Install" option in your browser menu.</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {filteredTenants.map(tenant => (
+                                <div key={tenant.id} className="bg-white p-4 rounded-xl shadow hover:shadow-lg transition border-t-4 border-blue-900">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <span className={`px-2 py-1 text-xs rounded font-bold ${tenant.status === 'Paid' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{tenant.status}</span>
+                                        <span className="text-gray-500 font-mono">{tenant.unitNo}</span>
+                                    </div>
+                                    <h3 className="text-lg font-bold mb-1">{tenant.name}</h3>
+                                    <p className="text-sm text-gray-600 mb-4 flex items-center"><a href={`tel:${tenant.mobileNumber}`} className="hover:text-blue-600">{tenant.mobileNumber}</a></p>
+                                    
+                                    <div className="bg-gray-50 p-2 rounded mb-4 text-sm">
+                                        <div className="flex justify-between"><span>Rent:</span> <span className="font-bold">{formatCurrency(tenant.monthlyRent)}</span></div>
+                                        {tenant.status === 'Due' && (
+                                            <div className="flex justify-between text-red-600 mt-1 pt-1 border-t border-gray-200">
+                                                <span>Total Due:</span> 
+                                                <span className="font-bold">{formatCurrency(tenant.monthlyRent + calculateLateFee(tenant.monthlyRent, getCurrentDueCycle().dueDate))}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </main>
+
+                    <MessagePopup text={message.text} type={message.type} onClose={() => setMessage({ text: '', type: '' })} />
                 </div>
             );
-        }
+        };
 
         const root = createRoot(document.getElementById('root'));
         root.render(<App />);
-    </script>
-
-    <!-- Service Worker Registration -->
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
-                    .then((registration) => {
-                        console.log('Service Worker registered successfully:', registration.scope);
-                    })
-                    .catch((error) => {
-                        console.log('Service Worker registration failed:', error);
-                    });
-            });
-        }
     </script>
 </body>
 </html>
