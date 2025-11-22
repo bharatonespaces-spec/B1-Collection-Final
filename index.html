@@ -3,33 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0B1F3A">
     <title>BharatOne Rent Collection Dashboard</title>
     <link rel="manifest" href="manifest.json">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
 </head>
-<body class="bg-warm-ivory">
+<body class="bg-gray-50">
     <div id="root"></div>
-    <script type="text/babel">
-        // Full React application code from paste.txt goes here
-        // This is the B1 Collection Final version
+    <script>
+        const { useState, useEffect } = React;
+        const { createRoot } = ReactDOM;
+
+        function App() {
+            const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900">
+                    {/* Header */}
+                    <header className="bg-white shadow-md">
+                        <div className="max-w-7xl mx-auto px-4 py-6">
+                            <h1 className="text-3xl font-bold text-blue-900">BharatOne Spaces</h1>
+                            <p className="text-gray-600">Rent Collection Dashboard</p>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <main className="max-w-7xl mx-auto px-4 py-8">
+                        {/* Welcome Card */}
+                        <div className="bg-white rounded-lg shadow-lg p-8 mb-6">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-4">Welcome to BharatOne Collection System</h2>
+                            <p className="text-gray-600 mb-4">Manage your rent collection and tenant information efficiently.</p>
+                            <div className="flex gap-4">
+                                <button className="bg-blue-900 text-white px-6 py-3 rounded-lg hover:bg-blue-800 transition">
+                                    View Collections
+                                </button>
+                                <button className="bg-gray-200 text-gray-800 px-6 py-3 rounded-lg hover:bg-gray-300 transition">
+                                    Add Tenant
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                            <div className="bg-white rounded-lg shadow-lg p-6">
+                                <h3 className="text-gray-600 text-sm mb-2">Total Collection</h3>
+                                <p className="text-3xl font-bold text-green-600">₹45,000</p>
+                            </div>
+                            <div className="bg-white rounded-lg shadow-lg p-6">
+                                <h3 className="text-gray-600 text-sm mb-2">Pending</h3>
+                                <p className="text-3xl font-bold text-orange-600">₹12,000</p>
+                            </div>
+                            <div className="bg-white rounded-lg shadow-lg p-6">
+                                <h3 className="text-gray-600 text-sm mb-2">Active Tenants</h3>
+                                <p className="text-3xl font-bold text-blue-900">15</p>
+                            </div>
+                        </div>
+
+                        {/* Install App Section */}
+                        <div className="bg-blue-600 text-white rounded-lg shadow-lg p-8 text-center">
+                            <h3 className="text-2xl font-bold mb-4">📱 Install as Mobile App</h3>
+                            <p className="mb-4">Get quick access by installing BharatOne as an app on your device!</p>
+                            <p className="text-sm opacity-90">Look for the "Add to Home Screen" or "Install" option in your browser menu.</p>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 
-      <!-- Service Worker Registration -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then((registration) => {
-            console.log('Service Worker registered successfully:', registration.scope);
-          })
-          .catch((error) => {
-            console.log('Service Worker registration failed:', error);
-          });
-      });
-    }
-  </script>
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then((registration) => {
+                        console.log('Service Worker registered successfully:', registration.scope);
+                    })
+                    .catch((error) => {
+                        console.log('Service Worker registration failed:', error);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>
